@@ -4,7 +4,9 @@
  */
 
 package de.blinkt.openvpn.core;
-
+import android.content.SharedPreferences;
+import android.os.HandlerThread;
+import android.os.Process;
 import android.Manifest.permission;
 import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
@@ -94,7 +96,7 @@ public class OpenVPNService extends VpnService implements StateListener, Callbac
     public static final String NOTIFICATION_CHANNEL_BG_ID = "openvpn_bg";
     public static final String NOTIFICATION_CHANNEL_NEWSTATUS_ID = "openvpn_newstat";
     public static final String NOTIFICATION_CHANNEL_USERREQ_ID = "openvpn_userreq";
-
+private static final String TAG = "OpenVPNService";
     public static final String VPNSERVICE_TUN = "vpnservice-tun";
     public final static String ORBOT_PACKAGE_NAME = "org.torproject.android";
     private static final String PAUSE_VPN = "de.blinkt.openvpn.PAUSE_VPN";
@@ -253,7 +255,33 @@ public class OpenVPNService extends VpnService implements StateListener, Callbac
             mManagement.sendCRResponse(b64response);
         }
     }
-
+private void checkAndResumeTimerMonitoring() {
+    try {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        
+        // Check if we have timer settings saved
+        int allowedDuration = prefs.getInt(KEY_ALLOWED_DURATION, -1);
+        boolean isProUser = prefs.getBoolean(KEY_IS_PRO_USER, false);
+        long startTime = prefs.getLong(KEY_CONNECTION_START_TIME, 0);
+        
+        Log.d(TAG, "checkAndResumeTimerMonitoring - Duration: " + allowedDuration + 
+              ", Pro: " + isProUser + ", StartTime: " + startTime);
+        
+        // If we have valid timer settings and VPN is connected, resume monitoring
+        if (!isProUser && allowedDuration > 0 && startTime > 0) {
+            // Check if VPN is currently connected
+            String currentStatus = OpenVPNService.getStatus();
+            if (currentStatus != null && currentStatus.equals("connected")) {
+                Log.d(TAG, "Resuming timer monitoring after service restart");
+                startTimerMonitoring();
+            } else {
+                Log.d(TAG, "Timer settings exist but VPN not connected");
+            }
+        }
+    } catch (Exception e) {
+        Log.e(TAG, "Error checking timer monitoring: " + e.getMessage(), e);
+    }
+}
 
     @Override
     public IBinder onBind(Intent intent) {
@@ -276,8 +304,8 @@ public class OpenVPNService extends VpnService implements StateListener, Callbac
         endVpnService();
     }
 
-    public void endVpnService() {
-              stopTimerMonitoring();
+      public void endVpnService() {
+        stopTimerMonitoring();
         synchronized (mProcessLock) {
             mProcessThread = null;
         }
@@ -294,7 +322,6 @@ public class OpenVPNService extends VpnService implements StateListener, Callbac
             }
         }
     }
-
     @RequiresApi(Build.VERSION_CODES.O)
     private String createNotificationChannel(String channelId, String channelName) {
         NotificationChannel chan = new NotificationChannel(channelId,
@@ -835,6 +862,9 @@ public void onCreate() {
 
     timerHandler = new Handler(timerThread.getLooper());
     setupTimerCheck();
+    
+    // ✅ ADD THIS ONE LINE:
+    checkAndResumeTimerMonitoring();
 }
    private void setupTimerCheck() {
         timerCheckRunnable = new Runnable() {
@@ -848,7 +878,7 @@ public void onCreate() {
             }
         };
     }
-  private void checkVpnTimeLimit() {
+ private void checkVpnTimeLimit() {
         try {
             SharedPreferences prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
             
@@ -896,7 +926,8 @@ public void onCreate() {
             Log.e(TAG, "Error checking VPN time limit: " + e.getMessage(), e);
         }
     }
- private void showTimeWarningNotification(long remainingSeconds) {
+
+private void showTimeWarningNotification(long remainingSeconds) {
         try {
             String channel = NOTIFICATION_CHANNEL_NEWSTATUS_ID;
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -933,6 +964,7 @@ public void onCreate() {
             Log.e(TAG, "Error showing warning notification: " + e.getMessage(), e);
         }
     }
+
  private void disconnectDueToTimeLimit() {
         try {
             Log.d(TAG, "Disconnecting VPN due to time limit");
@@ -952,7 +984,6 @@ public void onCreate() {
             }
             
             // Update status
-            updateStage("disconnected");
             VpnStatus.updateStateString("NOPROCESS", "VPN disconnected due to time limit", 
                 R.string.state_noprocess, ConnectionStatus.LEVEL_NOTCONNECTED);
 
@@ -960,7 +991,7 @@ public void onCreate() {
             Log.e(TAG, "Error disconnecting VPN: " + e.getMessage(), e);
         }
     }
-     private void showTimeLimitReachedNotification() {
+private void showTimeLimitReachedNotification() {
         try {
             String channel = NOTIFICATION_CHANNEL_NEWSTATUS_ID;
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -978,7 +1009,6 @@ public void onCreate() {
             nbuilder.setAutoCancel(true);
             nbuilder.setOngoing(false);
 
-            // Make it high priority so user sees it
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
                 nbuilder.setPriority(Notification.PRIORITY_MAX);
             }
@@ -991,7 +1021,6 @@ public void onCreate() {
                 nbuilder.setChannelId(channel);
             }
 
-            // Add vibration and sound
             nbuilder.setDefaults(Notification.DEFAULT_ALL);
 
             Notification notification = nbuilder.build();
@@ -1001,7 +1030,8 @@ public void onCreate() {
             Log.e(TAG, "Error showing time limit notification: " + e.getMessage(), e);
         }
     }
-        private void clearTimerPreferences() {
+
+     private void clearTimerPreferences() {
         try {
             SharedPreferences prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
             prefs.edit().clear().apply();
@@ -1010,11 +1040,11 @@ public void onCreate() {
             Log.e(TAG, "Error clearing timer preferences: " + e.getMessage(), e);
         }
     }
-     private void startTimerMonitoring() {
+
+    private void startTimerMonitoring() {
         try {
             SharedPreferences prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
             
-            // Check if monitoring is needed
             boolean isProUser = prefs.getBoolean(KEY_IS_PRO_USER, false);
             int allowedDuration = prefs.getInt(KEY_ALLOWED_DURATION, -1);
             
@@ -1023,10 +1053,8 @@ public void onCreate() {
                 return;
             }
 
-            // Ensure start time is set
             long startTime = prefs.getLong(KEY_CONNECTION_START_TIME, 0);
             if (startTime == 0) {
-                // Set start time to now
                 prefs.edit().putLong(KEY_CONNECTION_START_TIME, System.currentTimeMillis()).apply();
                 Log.d(TAG, "Set connection start time: " + System.currentTimeMillis());
             }
@@ -1042,7 +1070,7 @@ public void onCreate() {
         }
     }
 
-    private void stopTimerMonitoring() {
+  private void stopTimerMonitoring() {
         try {
             if (isTimerMonitoringActive) {
                 isTimerMonitoringActive = false;
@@ -1053,15 +1081,36 @@ public void onCreate() {
             Log.e(TAG, "Error stopping timer monitoring: " + e.getMessage(), e);
         }
     }
-    @Override
+
+   @Override
     public void onDestroy() {
+        Log.d(TAG, "onDestroy called");
+        
+        // Stop timer monitoring first
+        stopTimerMonitoring();
+        
+        // Quit timer thread
+        if (timerThread != null) {
+            timerThread.quitSafely();
+            timerThread = null;
+        }
 
-        sendMessage("DISCONNECTED");
-    stopTimerMonitoring();   // ✅ FIRST
+        // Rest of your existing onDestroy code...
+        synchronized (mProcessLock) {
+            if (mProcessThread != null) {
+                mManagement.stopVPN(true);
+            }
+        }
 
-    if (timerThread != null) {
-        timerThread.quitSafely();
-        timerThread = null;
+        try {
+            if (mDeviceStateReceiver != null) {
+                this.unregisterReceiver(mDeviceStateReceiver);
+            }
+        } catch (IllegalArgumentException ignored) {
+        }
+        
+        VpnStatus.removeStateListener(this);
+        VpnStatus.flushLog();
     }
 
           
@@ -1530,20 +1579,16 @@ public void onCreate() {
         mLocalIPv6 = ipv6addr;
     }
 
-    @Override
+    
 
-public void updateState(String state, String logmessage, int resid, ConnectionStatus level, Intent intent) {
-    // If the process is not running, ignore any state,
-    // Notification should be invisible in this state
+  @Override
+    public void updateState(String state, String logmessage, int resid, ConnectionStatus level, Intent intent) {
+        doSendBroadcast(state, level);
+        if (mProcessThread == null && !mNotificationAlwaysVisible)
+            return;
 
-    doSendBroadcast(state, level);
-    if (mProcessThread == null && !mNotificationAlwaysVisible)
-        return;
+        String channel = NOTIFICATION_CHANNEL_NEWSTATUS_ID;
 
-    String channel = NOTIFICATION_CHANNEL_NEWSTATUS_ID;
-    // Display byte count only after being connected
-
-    {
         if (level == LEVEL_CONNECTED) {
             mDisplayBytecount = true;
             mConnecttime = System.currentTimeMillis();
@@ -1561,20 +1606,11 @@ public void updateState(String state, String logmessage, int resid, ConnectionSt
             if (level == ConnectionStatus.LEVEL_NOTCONNECTED) {
                 Log.d(TAG, "VPN Disconnected - Stopping timer monitoring");
                 stopTimerMonitoring();
-                
-                // Don't clear preferences here if it was a time-limit disconnect
-                // The disconnectDueToTimeLimit() method already handles that
             }
         }
 
-        // Other notifications are shown,
-        // This also mean we are no longer connected, ignore bytecount messages until next
-        // CONNECTED
-        // Does not work :(
-        String msg = getString(resid);
         showNotification(VpnStatus.getLastCleanLogMessage(this),
                 VpnStatus.getLastCleanLogMessage(this), channel, 0, level, intent);
-
     }
 }
 
