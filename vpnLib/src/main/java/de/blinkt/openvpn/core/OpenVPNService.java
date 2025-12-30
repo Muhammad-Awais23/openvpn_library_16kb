@@ -557,6 +557,9 @@ public int onStartCommand(Intent intent, int flags, int startId) {
         if (durationSeconds > 0 || isProUser) {
             // Save to preferences
             SharedPreferences prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+            if (prefs.getInt(KEY_ALLOWED_DURATION, -1) > 0) {
+    startTimerMonitoring();
+}
             SharedPreferences.Editor editor = prefs.edit();
             
             if (isProUser) {
@@ -821,13 +824,18 @@ public int onStartCommand(Intent intent, int flags, int startId) {
     public IBinder asBinder() {
         return mBinder;
     }
+private HandlerThread timerThread;
+private Handler timerHandler;
+@Override
+public void onCreate() {
+    super.onCreate();
 
-   @Override
-    public void onCreate() {
-        super.onCreate();
-        timerHandler = new Handler(getMainLooper());
-        setupTimerCheck();
-    }
+    timerThread = new HandlerThread("OpenVPNTimerThread", Process.THREAD_PRIORITY_BACKGROUND);
+    timerThread.start();
+
+    timerHandler = new Handler(timerThread.getLooper());
+    setupTimerCheck();
+}
    private void setupTimerCheck() {
         timerCheckRunnable = new Runnable() {
             @Override
@@ -1047,8 +1055,16 @@ public int onStartCommand(Intent intent, int flags, int startId) {
     }
     @Override
     public void onDestroy() {
+
         sendMessage("DISCONNECTED");
-           stopTimerMonitoring();
+    stopTimerMonitoring();   // ✅ FIRST
+
+    if (timerThread != null) {
+        timerThread.quitSafely();
+        timerThread = null;
+    }
+
+          
         synchronized (mProcessLock) {
             if (mProcessThread != null) {
                 mManagement.stopVPN(true);
