@@ -3,6 +3,11 @@ group = 'com.github.nizwar'
 
 android {
     compileSdk 33
+    sourceSets {
+        main {
+            aidl.srcDirs = ['src/main/aidl']
+        }
+    }
     defaultConfig {
         minSdkVersion 21
         targetSdkVersion 33

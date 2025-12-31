@@ -17,6 +17,9 @@ import android.os.RemoteCallbackList;
 import android.os.RemoteException;
 import androidx.annotation.Nullable;
 import android.util.Pair;
+import de.blinkt.openvpn.core.IServiceStatus;
+import de.blinkt.openvpn.core.IStatusCallbacks;
+
 
 import java.io.DataOutputStream;
 import java.io.IOException;
